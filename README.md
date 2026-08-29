@@ -37,7 +37,8 @@ il/evaluate.py        # 在真实环境里对基线跑评估
 clone 一次库，上传 `kaggle.json`，然后一条命令跑完「拉榜一对局 → 建数据 → 训练 → 打包」：
 
 ```bash
-!git clone -b claude/kaggriculture-farming-agent-1mhbgh <你的仓库URL> kagg && cd kagg
+!git clone -b claude/kaggriculture-farming-agent-1mhbgh https://github.com/leooooeo/Kaggriculture-v1.git kagg
+%cd kagg
 # TEAM 留空=自动锁定排行榜第 1；也可 TEAM="某队名" 指定
 !TEAM="" N=60 EPOCHS=60 bash run_all.sh /content/kaggle.json
 !kaggle competitions submit kaggriculture -f submission.tar.gz -m "IL clone of #1 v1"

@@ -17,6 +17,19 @@ OUT_MODEL="${OUT_MODEL:-models/policy.pt}"
 echo "==> deps"
 pip install -q numpy torch kaggle-environments kaggle
 
+echo "==> kaggle credentials (for both python API and CLI)"
+python - "$CREDS" <<'PY'
+import json, os, sys, pathlib
+creds = json.load(open(sys.argv[1]))
+os.makedirs(os.path.expanduser("~/.kaggle"), exist_ok=True)
+dst = pathlib.Path(os.path.expanduser("~/.kaggle/kaggle.json"))
+dst.write_text(json.dumps({"username": creds["username"], "key": creds["key"]}))
+dst.chmod(0o600)
+print("wrote", dst)
+PY
+export KAGGLE_USERNAME="$(python -c 'import json,sys;print(json.load(open(sys.argv[1]))["username"])' "$CREDS")"
+export KAGGLE_KEY="$(python -c 'import json,sys;print(json.load(open(sys.argv[1]))["key"])' "$CREDS")"
+
 TEAM_ARG=(); [ -n "$TEAM" ] && TEAM_ARG=(--team "$TEAM")
 
 echo "==> 1/4 pull replays (team='${TEAM:-#1}', n=$N)"

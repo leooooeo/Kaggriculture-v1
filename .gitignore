@@ -1,10 +1,9 @@
-# training data & artifacts (regenerate locally / on Colab)
-data/replays/
-data/shards/
+# data & artifacts (pulled/generated in Colab)
+data/
 models/
+*.pt
 *.npz
 submission.tar.gz
-
-# python
+new_replays.tar.gz
 __pycache__/
 *.pyc

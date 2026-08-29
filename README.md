@@ -32,31 +32,40 @@ il/policy_agent.py    # 运行时：obs -> action；无权重/torch 时回退安
 il/evaluate.py        # 在真实环境里对基线跑评估
 ```
 
-## 在 Colab 上跑（你的主要流程）
+## 在 Colab 上跑（一条命令）
+
+clone 一次库，上传 `kaggle.json`，然后一条命令跑完「拉榜一对局 → 建数据 → 训练 → 打包」：
 
 ```bash
-# 1) clone 本库
 !git clone -b claude/kaggriculture-farming-agent-1mhbgh <你的仓库URL> kagg && cd kagg
+# TEAM 留空=自动锁定排行榜第 1；也可 TEAM="某队名" 指定
+!TEAM="" N=60 EPOCHS=60 bash run_all.sh /content/kaggle.json
+!kaggle competitions submit kaggriculture -f submission.tar.gz -m "IL clone of #1 v1"
+```
 
-# 2) 安装依赖
-!pip install -q numpy torch kaggle-environments
+`run_all.sh` 会：拉取榜一最近 `N` 局**完整回放**（含每步 obs/action）→ 自动识别目标
+队名 → 建分片 → 训练 `EPOCHS` 轮 → 本地评估 → 打包 `submission.tar.gz`。
 
-# 3) 放入回放：把榜一的 30 局回放 JSON 拷到 data/replays/
-#    （用 kaggle CLI 拉：kaggle competitions replay <EPISODE_ID> -p data/replays）
+### 拉取脚本（可单独用）
 
-# 4) 建训练分片。--team 填榜一的确切 TeamName（区分大小写）
-!python -m il.dataset --replays data/replays --out data/shards --team "TOP1_TEAM_NAME"
+```bash
+python -m il.pull_replays --creds /content/kaggle.json --out data/replays --n 60
+python -m il.pull_replays --creds kaggle.json --team "某队名" --n 60          # 指定队伍
+python -m il.pull_replays --creds kaggle.json --team "队名" --seed-episode 93600012 --n 30  # 兜底
+```
 
-# 5) 训练（Colab GPU 上把 epochs 调到 40~80）
-!python -m il.train --shards data/shards --out models/policy.pt --epochs 60 --batch 512
+用的是内部 `EpisodeService`（模拟回放公开，无需鉴权即可拉任意队伍对局），抓的是**带
+`steps` 的完整 replay**（不是 agent 日志）。若排行榜取 teamId 失败，用 `--seed-episode`
+传榜一的任一 episode id 兜底。
 
-# 6) 本地对战评估
-!python -m il.evaluate --games 6 --opponent random
-!python -m il.evaluate --games 4 --opponent new.py     # 需要仓库里的 new.py
+### 分步（手动控制时）
 
-# 7) 打包提交
-!tar -czf submission.tar.gz main.py il/ models/policy.pt
-!kaggle competitions submit kaggriculture -f submission.tar.gz -m "IL clone of TOP1 v1"
+```bash
+python -m il.dataset  --replays data/replays --out data/shards --team "榜一队名"
+python -m il.train    --shards data/shards --out models/policy.pt --epochs 80 --batch 512
+python -m il.evaluate --games 6 --opponent random
+python -m il.evaluate --games 4 --opponent new.py     # 需要仓库里的 new.py
+tar -czf submission.tar.gz main.py il/ models/policy.pt
 ```
 
 `--team` 省略时，脚本默认克隆**每局的赢家 seat**（"学赢家"）。要专注克隆某个人，

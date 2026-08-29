@@ -271,29 +271,28 @@ def _list_episode_ids(s, team_id=None, submission_id=None, seed_episode=None,
     return sorted({e["id"] for e in eps}, reverse=True)
 
 
-def _extract_replay(data):
-    rep = data.get("replay", data) if isinstance(data, dict) else data
-    if isinstance(rep, str):
-        rep = json.loads(rep)
-    return rep if isinstance(rep, dict) and "steps" in rep else None
-
-
-def _get_replay(s, episode_id):
-    # The internal proto field is case-sensitive; the widely-used scraper uses
-    # PascalCase "EpisodeId". Try that first, then other spellings.
-    last = None
-    for key in ("EpisodeId", "episodeId", "Id", "id"):
+def _download_replay(api, episode_id, out_dir):
+    """Use the official kaggle method (handles the GCS-hosted replay), then
+    normalize the produced file to episode-<id>-replay.json and return it."""
+    before = set(os.listdir(out_dir))
+    api.competition_episode_replay(int(episode_id), path=out_dir, quiet=True)
+    after = set(os.listdir(out_dir))
+    cand = [f for f in (after - before) if f.endswith(".json")]
+    if not cand:
+        cand = [f for f in after
+                if str(episode_id) in f and f.endswith(".json")]
+    for f in cand:
+        fp = os.path.join(out_dir, f)
         try:
-            r = s.post(BASE + "GetEpisodeReplay",
-                       data=json.dumps({key: int(episode_id)}))
-            if r.status_code == 200:
-                rep = _extract_replay(r.json())
-                if rep is not None:
-                    return rep
-            last = f"{key}->{r.status_code}"
-        except Exception as e:  # noqa: BLE001
-            last = f"{key}->{e!r}"
-    raise RuntimeError(f"GetEpisodeReplay failed ({last})")
+            rep = json.load(open(fp))
+        except Exception:  # noqa: BLE001
+            continue
+        if isinstance(rep, dict) and "steps" in rep:
+            dst = os.path.join(out_dir, f"episode-{episode_id}-replay.json")
+            if os.path.abspath(fp) != os.path.abspath(dst):
+                os.replace(fp, dst)
+            return rep
+    return None
 
 
 def main():
@@ -347,11 +346,14 @@ def main():
             ok += 1
             continue
         try:
-            rep = _get_replay(s, ep)
-            if "steps" not in rep or "info" not in rep:
-                print(f"  ! ep {ep}: replay missing steps/info, skipped")
+            rep = _download_replay(api, ep, args.out)
+            if rep is None:
+                print(f"  ! ep {ep}: no replay json produced")
                 continue
-            json.dump(rep, open(dst, "w"))
+            if ok == 0:  # confirm structure once
+                info = rep.get("info", {})
+                print(f"  [check] keys={list(rep.keys())} | "
+                      f"info.TeamNames={info.get('TeamNames')}")
             ok += 1
             print(f"[{i+1}/{len(ids)}] ep {ep} saved ({len(rep['steps'])} steps)")
         except Exception as e:  # noqa: BLE001

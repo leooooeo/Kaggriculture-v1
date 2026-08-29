@@ -194,21 +194,48 @@ def _list_episode_ids(s, team_id=None, submission_id=None, seed_episode=None,
     if submission_id is None and seed_episode is not None:
         meta = _post(s, "ListEpisodes", {"ids": [int(seed_episode)]})
         teams = meta.get("teams", [])
-        tid = team_id
-        if tid is None and team_name:
-            tid = next((t["id"] for t in teams if t.get("teamName") == team_name), None)
-        if tid is not None:
-            for ep in meta.get("episodes", []):
+        episodes = meta.get("episodes", [])
+        print(f"  [seed {seed_episode}] top keys: {list(meta.keys())}")
+        if teams:
+            print(f"  [seed] team keys: {list(teams[0].keys())}")
+            print(f"  [seed] teams: " +
+                  "; ".join(f"{t.get('teamName')}#{t.get('id')}"
+                            f"->sub{t.get('publicLeaderboardSubmissionId') or t.get('submissionId')}"
+                            for t in teams))
+        if episodes and episodes[0].get("agents"):
+            print(f"  [seed] agent keys: {list(episodes[0]['agents'][0].keys())}")
+
+        def _team_matches(t):
+            return (str(t.get("id")) == str(team_id)
+                    or (team_name and t.get("teamName") == team_name))
+
+        # 1) submissionId straight off the matching team record
+        for t in teams:
+            if _team_matches(t):
+                submission_id = (t.get("publicLeaderboardSubmissionId")
+                                 or t.get("submissionId")
+                                 or t.get("lastSubmissionId"))
+                if submission_id:
+                    break
+        # 2) else from the agents of the seed episode(s)
+        if submission_id is None:
+            tid = team_id or next((t.get("id") for t in teams if _team_matches(t)), None)
+            for ep in episodes:
                 for a in ep.get("agents", []):
-                    if a.get("teamId") == tid and a.get("submissionId"):
+                    a_tid = a.get("teamId") or a.get("teamNameId")
+                    if a.get("submissionId") and (a_tid == tid or str(a_tid) == str(tid)):
                         submission_id = a["submissionId"]
                         break
                 if submission_id:
                     break
-            if submission_id is None:
-                submission_id = next(
-                    (t.get("publicLeaderboardSubmissionId") for t in teams
-                     if t.get("id") == tid), None)
+        # 3) last resort: if exactly one team isn't ours, the other is ours
+        if submission_id is None and len(teams) == 2 and team_name:
+            other = [t for t in teams if t.get("teamName") == team_name]
+            if other:
+                submission_id = (other[0].get("publicLeaderboardSubmissionId")
+                                 or other[0].get("submissionId"))
+        if submission_id:
+            print(f"  [seed] resolved submissionId = {submission_id}")
 
     def _page(payload):
         data = _post(s, "ListEpisodes", payload)

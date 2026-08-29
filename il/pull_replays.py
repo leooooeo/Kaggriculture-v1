@@ -271,12 +271,29 @@ def _list_episode_ids(s, team_id=None, submission_id=None, seed_episode=None,
     return sorted({e["id"] for e in eps}, reverse=True)
 
 
-def _get_replay(s, episode_id):
-    data = _post(s, "GetEpisodeReplay", {"episodeId": int(episode_id)})
-    rep = data.get("replay", data)
+def _extract_replay(data):
+    rep = data.get("replay", data) if isinstance(data, dict) else data
     if isinstance(rep, str):
         rep = json.loads(rep)
-    return rep
+    return rep if isinstance(rep, dict) and "steps" in rep else None
+
+
+def _get_replay(s, episode_id):
+    # The internal proto field is case-sensitive; the widely-used scraper uses
+    # PascalCase "EpisodeId". Try that first, then other spellings.
+    last = None
+    for key in ("EpisodeId", "episodeId", "Id", "id"):
+        try:
+            r = s.post(BASE + "GetEpisodeReplay",
+                       data=json.dumps({key: int(episode_id)}))
+            if r.status_code == 200:
+                rep = _extract_replay(r.json())
+                if rep is not None:
+                    return rep
+            last = f"{key}->{r.status_code}"
+        except Exception as e:  # noqa: BLE001
+            last = f"{key}->{e!r}"
+    raise RuntimeError(f"GetEpisodeReplay failed ({last})")
 
 
 def main():

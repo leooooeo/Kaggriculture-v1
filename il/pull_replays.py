@@ -75,7 +75,9 @@ def _entry_fields(e):
         return None
     tid = pick("teamId", "team_id", "teamNameId", "id")
     name = pick("teamName", "team_name", "displayName", "name")
-    return tid, name
+    sub = pick("submissionId", "submission_id", "bestSubmissionId",
+               "publicLeaderboardSubmissionId", "lastSubmissionId")
+    return tid, name, sub
 
 
 def _iter_entries(lb):
@@ -127,11 +129,14 @@ def _leaderboard_rows_via_csv(api):
                 id_col = next((cols[c] for c in cols if "team" in c and "id" in c), None)
                 name_col = next((cols[c] for c in cols
                                  if "team" in c and ("name" in c or c == "team")), None)
+                sub_col = next((cols[c] for c in cols
+                                if "submission" in c and "id" in c), None)
                 for r in reader:
                     tid = r.get(id_col) if id_col else None
                     name = r.get(name_col) if name_col else None
+                    sub = r.get(sub_col) if sub_col else None
                     if tid and name:
-                        rows.append((tid, name))
+                        rows.append((tid, name, sub))
     return rows
 
 
@@ -141,9 +146,9 @@ def _top_team(api, rank_team):
     if not rows:
         lb = api.competition_leaderboard_view(COMP)
         for e in _iter_entries(lb):
-            tid, name = _entry_fields(e)
+            tid, name, sub = _entry_fields(e)
             if tid is not None and name is not None:
-                rows.append((tid, name))
+                rows.append((tid, name, sub))
     if not rows:
         lb = api.competition_leaderboard_view(COMP)
         print(f"! Could not parse leaderboard object (type={type(lb).__name__}).")
@@ -153,9 +158,9 @@ def _top_team(api, rank_team):
                   "| attrs:", [a for a in dir(sample) if not a.startswith('_')][:20])
         raise SystemExit("Leaderboard parse failed; pass --team and --seed-episode.")
     if rank_team:
-        for tid, name in rows:
-            if name == rank_team:
-                return tid, name
+        for row in rows:
+            if row[1] == rank_team:
+                return row
         print(f"! '{rank_team}' not found on leaderboard; using rank #1 ({rows[0][1]!r}).")
     return rows[0]
 
@@ -189,14 +194,14 @@ def _list_episode_ids(s, team_id=None, submission_id=None, seed_episode=None,
         return data.get("episodes", [])
 
     seen, eps = set(), []
-    # Prefer teamId listing; fall back to submissionId.
+    # ListEpisodes accepts submissionId (teamId returns 400), so prefer it.
     payloads = []
-    if team_id is not None:
-        payloads.append({"teamId": int(team_id)})
     if submission_id is not None:
         payloads.append({"submissionId": int(submission_id)})
+    if team_id is not None:
+        payloads.append({"teamId": int(team_id)})  # last resort; may 400
     if not payloads:
-        raise SystemExit("No teamId/submissionId resolved; pass --seed-episode.")
+        raise SystemExit("No submissionId resolved; pass --team and --seed-episode.")
 
     for base_payload in payloads:
         payload = dict(base_payload)
@@ -241,21 +246,25 @@ def main():
     api = _authenticate(args.creds)
     s = _session()
 
-    team_id, team_name = None, args.team
+    team_id, team_name, submission_id = None, args.team, None
     try:
-        team_id, team_name = _top_team(api, args.team)
-        print(f"Target team: {team_name!r} (teamId={team_id})")
+        team_id, team_name, submission_id = _top_team(api, args.team)
+        print(f"Target team: {team_name!r} (teamId={team_id}, submissionId={submission_id})")
     except SystemExit as e:
         if args.seed_episode is None:
             raise
         print(f"! leaderboard lookup failed ({e}); using seed episode path.")
 
-    ids = _list_episode_ids(s, team_id=team_id, seed_episode=args.seed_episode,
+    ids = _list_episode_ids(s, team_id=team_id, submission_id=submission_id,
+                            seed_episode=args.seed_episode,
                             team_name=team_name, want=args.n)
     ids = ids[:args.n]
     print(f"Found {len(ids)} episodes; downloading replays...")
     os.makedirs(args.out, exist_ok=True)
-    json.dump(ids, open(os.path.join(args.out, "_episode_ids.json"), "w"))
+    # write the id list OUTSIDE the replays dir so dataset.py won't glob it
+    ids_path = os.path.join(os.path.dirname(args.out.rstrip("/")) or ".",
+                            "_episode_ids.json")
+    json.dump(ids, open(ids_path, "w"))
 
     ok = 0
     for i, ep in enumerate(ids):

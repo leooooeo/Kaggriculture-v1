@@ -40,6 +40,8 @@ def _valid_obs(obs, seat):
 
 def encode_replay(path, team):
     replay = json.load(open(path))
+    if not isinstance(replay, dict) or "steps" not in replay or "info" not in replay:
+        return None  # not a replay file (e.g. a stray id list)
     seat = _seat_for_team(replay, team)
     if seat is None:
         return None
@@ -107,7 +109,7 @@ def main():
                     help="Exact TeamName to imitate. Omit = winner of each game.")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
-    paths = sorted(glob.glob(os.path.join(args.replays, "*.json")))
+    paths = sorted(glob.glob(os.path.join(args.replays, "episode-*.json")))
     if not paths:
         raise SystemExit(f"No replays found in {args.replays}")
     n_steps = 0

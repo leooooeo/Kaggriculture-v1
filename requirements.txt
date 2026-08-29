@@ -1,0 +1,6 @@
+# Runtime + training deps for the Kaggriculture imitation-learning agent.
+# Torch is CPU-only here; on Colab a GPU wheel is already present.
+numpy>=1.24
+torch>=2.0
+kaggle-environments>=1.32.7
+kaggle>=1.6            # only needed to pull replays / submit

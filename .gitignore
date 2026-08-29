@@ -1,0 +1,10 @@
+# training data & artifacts (regenerate locally / on Colab)
+data/replays/
+data/shards/
+models/
+*.npz
+submission.tar.gz
+
+# python
+__pycache__/
+*.pyc

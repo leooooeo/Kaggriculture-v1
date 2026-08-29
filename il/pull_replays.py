@@ -27,10 +27,14 @@ COMP = "kaggriculture"
 BASE = "https://www.kaggle.com/api/i/competitions.EpisodeService/"
 
 
-def _session():
+def _session(creds=None):
     s = requests.Session()
     s.headers.update({"User-Agent": "Mozilla/5.0",
                       "Content-Type": "application/json"})
+    # Basic auth (username, key) — needed for team-scoped internal endpoints;
+    # by-id replay fetches work without it, listing a team's history may not.
+    if creds and creds.get("username") and creds.get("key"):
+        s.auth = (creds["username"], creds["key"])
     return s
 
 
@@ -48,7 +52,7 @@ def _authenticate(creds_path):
     from kaggle.api.kaggle_api_extended import KaggleApi
     api = KaggleApi()
     api.authenticate()
-    return api
+    return api, creds
 
 
 def _entry_fields(e):
@@ -157,12 +161,29 @@ def _top_team(api, rank_team):
             print("  first entry type:", type(sample).__name__,
                   "| attrs:", [a for a in dir(sample) if not a.startswith('_')][:20])
         raise SystemExit("Leaderboard parse failed; pass --team and --seed-episode.")
+    chosen = None
     if rank_team:
         for row in rows:
             if row[1] == rank_team:
-                return row
-        print(f"! '{rank_team}' not found on leaderboard; using rank #1 ({rows[0][1]!r}).")
-    return rows[0]
+                chosen = row
+                break
+        if chosen is None:
+            print(f"! '{rank_team}' not found on leaderboard; using rank #1 ({rows[0][1]!r}).")
+    chosen = chosen or rows[0]
+    tid, name, sub = chosen
+    # If the (CSV) row had no submissionId, try the view object which sometimes
+    # carries it, matching by team name.
+    if not sub:
+        try:
+            lb = api.competition_leaderboard_view(COMP)
+            for e in _iter_entries(lb):
+                etid, ename, esub = _entry_fields(e)
+                if esub and (ename == name or str(etid) == str(tid)):
+                    sub = esub
+                    break
+        except Exception:  # noqa: BLE001
+            pass
+    return tid, name, sub
 
 
 def _list_episode_ids(s, team_id=None, submission_id=None, seed_episode=None,
@@ -243,8 +264,8 @@ def main():
     ap.add_argument("--sleep", type=float, default=0.8)
     args = ap.parse_args()
 
-    api = _authenticate(args.creds)
-    s = _session()
+    api, creds = _authenticate(args.creds)
+    s = _session(creds)
 
     team_id, team_name, submission_id = None, args.team, None
     try:
@@ -259,6 +280,15 @@ def main():
                             seed_episode=args.seed_episode,
                             team_name=team_name, want=args.n)
     ids = ids[:args.n]
+    if not ids:
+        raise SystemExit(
+            "\nNo episodes listed for this team.\n"
+            f"The internal API needs a submissionId (teamId listing is blocked) and\n"
+            f"none was found automatically for {team_name!r}.\n"
+            "Fix: open this team on the Kaggle leaderboard, click any of their games,\n"
+            "copy the episode id from the URL, and re-run with the seed fallback:\n"
+            f'  python -m il.pull_replays --creds "{args.creds}" '
+            f'--team "{team_name}" --seed-episode <EPISODE_ID> --n {args.n}\n')
     print(f"Found {len(ids)} episodes; downloading replays...")
     os.makedirs(args.out, exist_ok=True)
     # write the id list OUTSIDE the replays dir so dataset.py won't glob it

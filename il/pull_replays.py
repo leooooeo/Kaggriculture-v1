@@ -51,23 +51,112 @@ def _authenticate(creds_path):
     return api
 
 
+def _entry_fields(e):
+    """Pull (teamId, teamName) from a leaderboard entry of unknown shape."""
+    d = e if isinstance(e, dict) else None
+    if d is None:
+        for m in ("to_dict", "_asdict"):
+            if hasattr(e, m):
+                try:
+                    d = getattr(e, m)()
+                    break
+                except Exception:  # noqa: BLE001
+                    pass
+    if d is None:
+        d = getattr(e, "__dict__", {}) or {}
+
+    def pick(*names):
+        for n in names:
+            if isinstance(d, dict) and d.get(n) not in (None, ""):
+                return d[n]
+            v = getattr(e, n, None)
+            if v not in (None, ""):
+                return v
+        return None
+    tid = pick("teamId", "team_id", "teamNameId", "id")
+    name = pick("teamName", "team_name", "displayName", "name")
+    return tid, name
+
+
+def _iter_entries(lb):
+    """Yield entries from a list, or a paginated object's submissions/teams."""
+    if isinstance(lb, (list, tuple)):
+        yield from lb
+        return
+    for attr in ("submissions", "teams", "entries", "results", "leaderboard"):
+        v = getattr(lb, attr, None)
+        if isinstance(v, (list, tuple)):
+            yield from v
+            return
+    if isinstance(lb, dict):
+        for attr in ("submissions", "teams", "entries", "results"):
+            if isinstance(lb.get(attr), (list, tuple)):
+                yield from lb[attr]
+                return
+    try:  # last resort: maybe it is directly iterable
+        yield from lb
+    except TypeError:
+        return
+
+
+def _leaderboard_rows_via_csv(api):
+    """Most stable path: download the leaderboard CSV and parse (id,name)."""
+    import csv
+    import tempfile
+    import zipfile
+    rows = []
+    with tempfile.TemporaryDirectory() as td:
+        try:
+            api.competition_leaderboard_download(COMP, td)
+        except Exception as ex:  # noqa: BLE001
+            print(f"  (leaderboard CSV download failed: {ex})")
+            return rows
+        files = []
+        for f in os.listdir(td):
+            fp = os.path.join(td, f)
+            if f.endswith(".zip"):
+                with zipfile.ZipFile(fp) as z:
+                    z.extractall(td)
+        for f in os.listdir(td):
+            if f.endswith(".csv"):
+                files.append(os.path.join(td, f))
+        for fp in files:
+            with open(fp, newline="", encoding="utf-8") as fh:
+                reader = csv.DictReader(fh)
+                cols = {c.lower(): c for c in (reader.fieldnames or [])}
+                id_col = next((cols[c] for c in cols if "team" in c and "id" in c), None)
+                name_col = next((cols[c] for c in cols
+                                 if "team" in c and ("name" in c or c == "team")), None)
+                for r in reader:
+                    tid = r.get(id_col) if id_col else None
+                    name = r.get(name_col) if name_col else None
+                    if tid and name:
+                        rows.append((tid, name))
+    return rows
+
+
 def _top_team(api, rank_team):
     """Return (team_id, team_name) for the requested team, or rank #1."""
-    lb = api.competition_leaderboard_view(COMP)
-    rows = []
-    for e in lb:
-        d = e if isinstance(e, dict) else getattr(e, "__dict__", {})
-        tid = d.get("teamId") or d.get("teamNameId") or getattr(e, "teamId", None)
-        name = d.get("teamName") or getattr(e, "teamName", None)
-        if tid is not None and name is not None:
-            rows.append((tid, name))
+    rows = _leaderboard_rows_via_csv(api)
     if not rows:
-        raise SystemExit("Could not parse leaderboard; pass --team and --seed-episode.")
+        lb = api.competition_leaderboard_view(COMP)
+        for e in _iter_entries(lb):
+            tid, name = _entry_fields(e)
+            if tid is not None and name is not None:
+                rows.append((tid, name))
+    if not rows:
+        lb = api.competition_leaderboard_view(COMP)
+        print(f"! Could not parse leaderboard object (type={type(lb).__name__}).")
+        sample = next(iter(_iter_entries(lb)), None)
+        if sample is not None:
+            print("  first entry type:", type(sample).__name__,
+                  "| attrs:", [a for a in dir(sample) if not a.startswith('_')][:20])
+        raise SystemExit("Leaderboard parse failed; pass --team and --seed-episode.")
     if rank_team:
         for tid, name in rows:
             if name == rank_team:
                 return tid, name
-        print(f"! '{rank_team}' not found on leaderboard; using rank #1.")
+        print(f"! '{rank_team}' not found on leaderboard; using rank #1 ({rows[0][1]!r}).")
     return rows[0]
 
 

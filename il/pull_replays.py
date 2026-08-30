@@ -171,18 +171,25 @@ def _top_team(api, rank_team):
             print(f"! '{rank_team}' not found on leaderboard; using rank #1 ({rows[0][1]!r}).")
     chosen = chosen or rows[0]
     tid, name, sub = chosen
-    # If the (CSV) row had no submissionId, try the view object which sometimes
-    # carries it, matching by team name.
+    # If the (CSV) row had no submissionId, dig it out of the view object, whose
+    # entries carry the team's active publicLeaderboardSubmissionId.
     if not sub:
         try:
             lb = api.competition_leaderboard_view(COMP)
+            dumped = False
             for e in _iter_entries(lb):
                 etid, ename, esub = _entry_fields(e)
-                if esub and (ename == name or str(etid) == str(tid)):
-                    sub = esub
-                    break
-        except Exception:  # noqa: BLE001
-            pass
+                if str(etid) == str(tid) or ename == name:
+                    if not dumped:
+                        d = e if isinstance(e, dict) else getattr(e, "__dict__", {})
+                        print(f"  [lb-entry {name}] fields: "
+                              f"{sorted(d.keys()) if isinstance(d, dict) else dir(e)}")
+                        dumped = True
+                    if esub:
+                        sub = esub
+                        break
+        except Exception as ex:  # noqa: BLE001
+            print(f"  (view submissionId lookup failed: {ex})")
     return tid, name, sub
 
 

@@ -1,0 +1,9 @@
+# data & artifacts (pulled/generated in Colab)
+data/
+models/
+*.pt
+*.npz
+submission.tar.gz
+new_replays.tar.gz
+__pycache__/
+*.pyc
